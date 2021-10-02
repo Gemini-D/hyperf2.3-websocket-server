@@ -48,5 +48,13 @@
         "hyperf": {
             "config": "Hyperf\\WebSocketServer\\ConfigProvider"
         }
+    },
+    "require-dev": {
+        "gemini/hyperf2.3-contract": "2.3.x-dev",
+        "hyperf/framework": "^2.2",
+        "phpstan/phpstan": "^0.12.99"
+    },
+    "scripts": {
+        "analyse": "phpstan analyse --memory-limit 4096M -l 5"
     }
 }
