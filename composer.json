@@ -1,5 +1,5 @@
 {
-    "name": "hyperf/websocket-server",
+    "name": "gemini/hyperf2.3-websocket-server",
     "description": "A websocket server library for Hyperf.",
     "license": "MIT",
     "keywords": [
@@ -25,6 +25,9 @@
         "psr/event-dispatcher": "^1.0",
         "psr/log": "^1.0"
     },
+    "replace": {
+        "hyperf/websocket-server": "*"
+    },
     "autoload": {
         "psr-4": {
             "Hyperf\\WebSocketServer\\": "src/"
@@ -40,7 +43,7 @@
     },
     "extra": {
         "branch-alias": {
-            "dev-master": "2.2-dev"
+            "dev-master": "2.3-dev"
         },
         "hyperf": {
             "config": "Hyperf\\WebSocketServer\\ConfigProvider"
