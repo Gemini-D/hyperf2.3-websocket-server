@@ -21,12 +21,9 @@ use Hyperf\Contract\StdoutLoggerInterface;
 use Hyperf\Dispatcher\HttpDispatcher;
 use Hyperf\Engine\Constant;
 use Hyperf\Engine\Http\FdGetter;
-use Hyperf\Engine\WebSocket\Frame;
-use Hyperf\Engine\WebSocket\Opcode;
 use Hyperf\Engine\WebSocket\WebSocket;
 use Hyperf\ExceptionHandler\ExceptionHandlerDispatcher;
 use Hyperf\HttpMessage\Base\Response;
-use Hyperf\HttpMessage\Exception\BadRequestHttpException;
 use Hyperf\HttpMessage\Server\Request as Psr7Request;
 use Hyperf\HttpMessage\Server\Response as Psr7Response;
 use Hyperf\HttpServer\Contract\CoreMiddlewareInterface;
@@ -208,39 +205,6 @@ class Server implements MiddlewareInitializerInterface, OnHandShakeInterface, On
                 $upgrade->on(WebSocket::ON_MESSAGE, $this->getOnMessageCallback());
                 $upgrade->on(WebSocket::ON_CLOSE, $this->getOnCloseCallback());
                 $upgrade->start();
-            } elseif (Constant::isCoroutineServer($server)) {
-                if ($upgrade = $request->getUpgrade()) {
-                    if ($upgrade === $request::UPGRADE_WEBSOCKET) {
-                        /* @phpstan-ignore-next-line */
-                        $response->upgradeToWebSocket($request);
-                        $this->deferOnOpen($request, $class, $response);
-                        [$onMessageCallbackInstance, $onMessageCallbackMethod] = $this->getCallback(Event::ON_MESSAGE);
-                        [$onCloseCallbackInstance, $onCloseCallbackMethod] = $this->getCallback(Event::ON_CLOSE);
-                        while (true) {
-                            /* @phpstan-ignore-next-line */
-                            $frame = $response->recvWebSocketFrame();
-                            $opcode = $frame->getOpcode();
-                            switch ($opcode) {
-                                case Opcode::PING:
-                                    /* @phpstan-ignore-next-line */
-                                    $response->sendString(Frame::PONG);
-                                    break;
-                                case Opcode::PONG:
-                                    break;
-                                case Opcode::CLOSE:
-                                    wait(static function () use ($onCloseCallbackInstance, $onCloseCallbackMethod, $response, $fd) {
-                                        $onCloseCallbackInstance->{$onCloseCallbackMethod}($response, $fd, 0);
-                                    });
-                                    break 2;
-                                default:
-                                    wait(static function () use ($onMessageCallbackInstance, $onMessageCallbackMethod, $response, $frame) {
-                                        $onMessageCallbackInstance->{$onMessageCallbackMethod}($response, $frame);
-                                    });
-                            }
-                        }
-                    }
-                    throw new BadRequestHttpException('Unsupported Upgrade Type');
-                }
             } else {
                 $this->deferOnOpen($request, $class, $server);
             }
