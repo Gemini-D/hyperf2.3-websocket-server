@@ -205,8 +205,8 @@ class Server implements MiddlewareInitializerInterface, OnHandShakeInterface, On
                 $response instanceof SwooleResponse && $this->getSender()->setResponse($fd, $response);
                 $this->deferOnOpen($request, $class, $response);
 
-                $upgrade->on(WebSocket::ON_MESSAGE, $this->getCallback(Event::ON_MESSAGE));
-                $upgrade->on(WebSocket::ON_CLOSE, $this->getCallback(Event::ON_CLOSE));
+                $upgrade->on(WebSocket::ON_MESSAGE, $this->getOnMessageCallback());
+                $upgrade->on(WebSocket::ON_CLOSE, $this->getOnCloseCallback());
                 $upgrade->start();
             } elseif (Constant::isCoroutineServer($server)) {
                 if ($upgrade = $request->getUpgrade()) {
@@ -357,17 +357,35 @@ class Server implements MiddlewareInitializerInterface, OnHandShakeInterface, On
         return $psr7Response;
     }
 
-    protected function getCallback(string $event): callable
+    protected function getOnMessageCallback(): callable
     {
-        [, , $callbacks] = ServerManager::get($this->serverName);
+        [$instance, $method] = $this->getCallback(Event::ON_MESSAGE);
 
-        [$callback, $method] = $callbacks[$event];
-        $instance = $this->container->get($callback);
+        return static function ($response, $frame) use ($instance, $method) {
+            wait(static function () use ($instance, $method, $response, $frame) {
+                $instance->{$method}($response, $frame);
+            });
+        };
+    }
+
+    protected function getOnCloseCallback(): callable
+    {
+        [$instance, $method] = $this->getCallback(Event::ON_CLOSE);
 
         return static function ($response, $fd) use ($instance, $method) {
             wait(static function () use ($instance, $method, $response, $fd) {
                 $instance->{$method}($response, $fd, 0);
             });
         };
+    }
+
+    protected function getCallback(string $event): array
+    {
+        [, , $callbacks] = ServerManager::get($this->serverName);
+
+        [$callback, $method] = $callbacks[$event];
+        $instance = $this->container->get($callback);
+
+        return [$instance, $method];
     }
 }
