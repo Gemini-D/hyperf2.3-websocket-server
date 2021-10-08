@@ -18,8 +18,8 @@
         "ext-pdo": "*",
         "ext-pdo_mysql": "*",
         "ext-redis": "*",
-        "gemini/hyperf2.3-contract": "2.3.x-dev",
-        "gemini/hyperf2.3-websocket-server": "2.3.x-dev",
+        "gemini/hyperf2.3-contract": "^2.3",
+        "gemini/hyperf2.3-websocket-server": "^2.3",
         "hyperf/cache": "2.2.*",
         "hyperf/command": "2.2.*",
         "hyperf/config": "2.2.*",
@@ -29,7 +29,7 @@
         "hyperf/db-connection": "2.2.*",
         "hyperf/di": "2.2.*",
         "hyperf/dispatcher": "2.2.*",
-        "hyperf/engine-swow": "dev-master as v1.2.0",
+        "hyperf/engine-swow": "^1.2",
         "hyperf/event": "2.2.*",
         "hyperf/exception-handler": "2.2.*",
         "hyperf/framework": "2.2.*",
@@ -84,15 +84,5 @@
         "cs-fix": "@php vendor/bin/php-cs-fixer fix $1",
         "start": "@php bin/hyperf.php start",
         "test": "@php vendor/bin/phpunit -c phpunit.xml --colors=always"
-    },
-    "repositories": {
-        "ws": {
-            "type": "path",
-            "url": "../../"
-        },
-        "sw": {
-            "type": "path",
-            "url": "/Users/limingxin/Applications/GitHub/hyperf/engine-swow/"
-        }
     }
 }
