@@ -20,9 +20,8 @@ use Hyperf\Contract\OnOpenInterface;
 use Hyperf\Contract\StdoutLoggerInterface;
 use Hyperf\Dispatcher\HttpDispatcher;
 use Hyperf\Engine\Http\FdGetter;
-use Hyperf\Engine\Http\WebSocketOpcode;
-use Hyperf\Engine\WebSocket\Opcode;
 use Hyperf\Engine\WebSocket\Frame;
+use Hyperf\Engine\WebSocket\Opcode;
 use Hyperf\ExceptionHandler\ExceptionHandlerDispatcher;
 use Hyperf\HttpMessage\Base\Response;
 use Hyperf\HttpMessage\Exception\BadRequestHttpException;
@@ -45,7 +44,6 @@ use Hyperf\WebSocketServer\Exception\WebSocketHandeShakeException;
 use Psr\Container\ContainerInterface;
 use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
-use Swoole\Http\Request as SwooleRequest;
 use Swoole\Http\Response as SwooleResponse;
 use Swoole\Server as SwooleServer;
 use Swoole\WebSocket\CloseFrame;
@@ -105,13 +103,12 @@ class Server implements MiddlewareInitializerInterface, OnHandShakeInterface, On
     protected $server;
 
     public function __construct(
-        ContainerInterface         $container,
-        HttpDispatcher             $dispatcher,
+        ContainerInterface $container,
+        HttpDispatcher $dispatcher,
         ExceptionHandlerDispatcher $exceptionHandlerDispatcher,
-        ResponseEmitter            $responseEmitter,
-        StdoutLoggerInterface      $logger
-    )
-    {
+        ResponseEmitter $responseEmitter,
+        StdoutLoggerInterface $logger
+    ) {
         $this->container = $container;
         $this->dispatcher = $dispatcher;
         $this->exceptionHandlerDispatcher = $exceptionHandlerDispatcher;
@@ -155,11 +152,6 @@ class Server implements MiddlewareInitializerInterface, OnHandShakeInterface, On
     public function getSender(): Sender
     {
         return $this->container->get(Sender::class);
-    }
-
-    protected function getFd($response): int
-    {
-        return $this->container->get(FdGetter::class)->get($response);
     }
 
     public function onHandShake($request, $response): void
@@ -273,9 +265,9 @@ class Server implements MiddlewareInitializerInterface, OnHandShakeInterface, On
 
     public function onMessage($server, $frame): void
     {
-        if($server instanceof WebSocketServer){
+        if ($server instanceof WebSocketServer) {
             $fd = $frame->fd;
-        }else{
+        } else {
             $fd = $this->getFd($server);
         }
         Context::set(WsContext::FD, $fd);
@@ -325,8 +317,14 @@ class Server implements MiddlewareInitializerInterface, OnHandShakeInterface, On
         }
     }
 
+    protected function getFd($response): int
+    {
+        return $this->container->get(FdGetter::class)->get($response);
+    }
+
     /**
      * @param SwooleResponse|WebSocketServer $server
+     * @param mixed $request
      */
     protected function deferOnOpen($request, string $class, $server)
     {
@@ -334,13 +332,13 @@ class Server implements MiddlewareInitializerInterface, OnHandShakeInterface, On
         wait(static function () use ($request, $instance, $server) {
             if ($instance instanceof OnOpenInterface) {
                 $instance->onOpen($server, $request);
-
             }
         });
     }
 
     /**
      * Initialize PSR-7 Request.
+     * @param mixed $request
      */
     protected function initRequest($request): ServerRequestInterface
     {
