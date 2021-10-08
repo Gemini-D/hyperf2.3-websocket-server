@@ -23,6 +23,7 @@ use Hyperf\Engine\Constant;
 use Hyperf\Engine\Http\FdGetter;
 use Hyperf\Engine\WebSocket\Frame;
 use Hyperf\Engine\WebSocket\Opcode;
+use Hyperf\Engine\WebSocket\WebSocket;
 use Hyperf\ExceptionHandler\ExceptionHandlerDispatcher;
 use Hyperf\HttpMessage\Base\Response;
 use Hyperf\HttpMessage\Exception\BadRequestHttpException;
@@ -47,7 +48,6 @@ use Psr\Http\Message\ResponseInterface;
 use Psr\Http\Message\ServerRequestInterface;
 use Swoole\Http\Response as SwooleResponse;
 use Swoole\Server as SwooleServer;
-use Swoole\WebSocket\CloseFrame;
 use Swoole\WebSocket\Server as WebSocketServer;
 use Throwable;
 
@@ -198,27 +198,16 @@ class Server implements MiddlewareInitializerInterface, OnHandShakeInterface, On
 
             FdCollector::set($fd, $class);
             $server = $this->getServer();
-            if ($server instanceof \Swoole\Coroutine\Http\Server) {
-                $response->upgrade();
-                $this->getSender()->setResponse($fd, $response);
+            if (Constant::isCoroutineServer($server)) {
+                $upgrade = new WebSocket($response);
+
+                // TODO: Support SWOW
+                $response instanceof SwooleResponse && $this->getSender()->setResponse($fd, $response);
                 $this->deferOnOpen($request, $class, $response);
 
-                [$onMessageCallbackInstance, $onMessageCallbackMethod] = $this->getCallback(Event::ON_MESSAGE);
-                [$onCloseCallbackInstance, $onCloseCallbackMethod] = $this->getCallback(Event::ON_CLOSE);
-
-                while (true) {
-                    $frame = $response->recv();
-                    if ($frame === false || $frame instanceof CloseFrame || $frame === '') {
-                        wait(static function () use ($onCloseCallbackInstance, $onCloseCallbackMethod, $response, $fd) {
-                            $onCloseCallbackInstance->{$onCloseCallbackMethod}($response, $fd, 0);
-                        });
-                        break;
-                    }
-
-                    wait(static function () use ($onMessageCallbackInstance, $onMessageCallbackMethod, $response, $frame) {
-                        $onMessageCallbackInstance->{$onMessageCallbackMethod}($response, $frame);
-                    });
-                }
+                $upgrade->on(WebSocket::ON_MESSAGE, $this->getCallback(Event::ON_MESSAGE));
+                $upgrade->on(WebSocket::ON_CLOSE, $this->getCallback(Event::ON_CLOSE));
+                $upgrade->start();
             } elseif (Constant::isCoroutineServer($server)) {
                 if ($upgrade = $request->getUpgrade()) {
                     if ($upgrade === $request::UPGRADE_WEBSOCKET) {
@@ -368,13 +357,17 @@ class Server implements MiddlewareInitializerInterface, OnHandShakeInterface, On
         return $psr7Response;
     }
 
-    protected function getCallback(string $event): array
+    protected function getCallback(string $event): callable
     {
         [, , $callbacks] = ServerManager::get($this->serverName);
 
         [$callback, $method] = $callbacks[$event];
         $instance = $this->container->get($callback);
 
-        return [$instance, $method];
+        return static function ($response, $fd) use ($instance, $method) {
+            wait(static function () use ($instance, $method, $response, $fd) {
+                $instance->{$method}($response, $fd, 0);
+            });
+        };
     }
 }
