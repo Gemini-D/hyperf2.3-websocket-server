@@ -19,6 +19,7 @@ use Hyperf\Contract\OnMessageInterface;
 use Hyperf\Contract\OnOpenInterface;
 use Hyperf\Contract\StdoutLoggerInterface;
 use Hyperf\Dispatcher\HttpDispatcher;
+use Hyperf\Engine\Constant;
 use Hyperf\Engine\Http\FdGetter;
 use Hyperf\Engine\WebSocket\Frame;
 use Hyperf\Engine\WebSocket\Opcode;
@@ -154,6 +155,10 @@ class Server implements MiddlewareInitializerInterface, OnHandShakeInterface, On
         return $this->container->get(Sender::class);
     }
 
+    /**
+     * @param \Swoole\Http\Request|\Swow\Http\Server\Request $request
+     * @param SwooleResponse $response
+     */
     public function onHandShake($request, $response): void
     {
         try {
@@ -214,19 +219,21 @@ class Server implements MiddlewareInitializerInterface, OnHandShakeInterface, On
                         $onMessageCallbackInstance->{$onMessageCallbackMethod}($response, $frame);
                     });
                 }
-            } elseif ($server instanceof \Hyperf\Engine\Http\Server) {
+            } elseif (Constant::isCoroutineServer($server)) {
                 if ($upgrade = $request->getUpgrade()) {
                     if ($upgrade === $request::UPGRADE_WEBSOCKET) {
+                        /* @phpstan-ignore-next-line */
                         $response->upgradeToWebSocket($request);
-                        var_dump(get_class($response));
                         $this->deferOnOpen($request, $class, $response);
                         [$onMessageCallbackInstance, $onMessageCallbackMethod] = $this->getCallback(Event::ON_MESSAGE);
                         [$onCloseCallbackInstance, $onCloseCallbackMethod] = $this->getCallback(Event::ON_CLOSE);
                         while (true) {
+                            /* @phpstan-ignore-next-line */
                             $frame = $response->recvWebSocketFrame();
                             $opcode = $frame->getOpcode();
                             switch ($opcode) {
                                 case Opcode::PING:
+                                    /* @phpstan-ignore-next-line */
                                     $response->sendString(Frame::PONG);
                                     break;
                                 case Opcode::PONG:
