@@ -19,8 +19,13 @@ use Hyperf\Contract\OnMessageInterface;
 use Hyperf\Contract\OnOpenInterface;
 use Hyperf\Contract\StdoutLoggerInterface;
 use Hyperf\Dispatcher\HttpDispatcher;
+use Hyperf\Engine\Http\FdGetter;
+use Hyperf\Engine\Http\WebSocketOpcode;
+use Hyperf\Engine\WebSocket\Opcode;
+use Hyperf\Engine\WebSocket\Frame;
 use Hyperf\ExceptionHandler\ExceptionHandlerDispatcher;
 use Hyperf\HttpMessage\Base\Response;
+use Hyperf\HttpMessage\Exception\BadRequestHttpException;
 use Hyperf\HttpMessage\Server\Request as Psr7Request;
 use Hyperf\HttpMessage\Server\Response as Psr7Response;
 use Hyperf\HttpServer\Contract\CoreMiddlewareInterface;
@@ -100,12 +105,13 @@ class Server implements MiddlewareInitializerInterface, OnHandShakeInterface, On
     protected $server;
 
     public function __construct(
-        ContainerInterface $container,
-        HttpDispatcher $dispatcher,
+        ContainerInterface         $container,
+        HttpDispatcher             $dispatcher,
         ExceptionHandlerDispatcher $exceptionHandlerDispatcher,
-        ResponseEmitter $responseEmitter,
-        StdoutLoggerInterface $logger
-    ) {
+        ResponseEmitter            $responseEmitter,
+        StdoutLoggerInterface      $logger
+    )
+    {
         $this->container = $container;
         $this->dispatcher = $dispatcher;
         $this->exceptionHandlerDispatcher = $exceptionHandlerDispatcher;
@@ -151,11 +157,16 @@ class Server implements MiddlewareInitializerInterface, OnHandShakeInterface, On
         return $this->container->get(Sender::class);
     }
 
+    protected function getFd($response): int
+    {
+        return $this->container->get(FdGetter::class)->get($response);
+    }
+
     public function onHandShake($request, $response): void
     {
         try {
             CoordinatorManager::until(Constants::WORKER_START)->yield();
-            $fd = $request->fd;
+            $fd = $this->getFd($response);
             Context::set(WsContext::FD, $fd);
             $security = $this->container->get(Security::class);
 
@@ -195,13 +206,8 @@ class Server implements MiddlewareInitializerInterface, OnHandShakeInterface, On
                 $this->getSender()->setResponse($fd, $response);
                 $this->deferOnOpen($request, $class, $response);
 
-                [, , $callbacks] = ServerManager::get($this->serverName);
-
-                [$onMessageCallbackClass, $onMessageCallbackMethod] = $callbacks[Event::ON_MESSAGE];
-                $onMessageCallbackInstance = $this->container->get($onMessageCallbackClass);
-
-                [$onCloseCallbackClass, $onCloseCallbackMethod] = $callbacks[Event::ON_CLOSE];
-                $onCloseCallbackInstance = $this->container->get($onCloseCallbackClass);
+                [$onMessageCallbackInstance, $onMessageCallbackMethod] = $this->getCallback(Event::ON_MESSAGE);
+                [$onCloseCallbackInstance, $onCloseCallbackMethod] = $this->getCallback(Event::ON_CLOSE);
 
                 while (true) {
                     $frame = $response->recv();
@@ -216,14 +222,45 @@ class Server implements MiddlewareInitializerInterface, OnHandShakeInterface, On
                         $onMessageCallbackInstance->{$onMessageCallbackMethod}($response, $frame);
                     });
                 }
+            } elseif ($server instanceof \Hyperf\Engine\Http\Server) {
+                if ($upgrade = $request->getUpgrade()) {
+                    if ($upgrade === $request::UPGRADE_WEBSOCKET) {
+                        $response->upgradeToWebSocket($request);
+                        var_dump(get_class($response));
+                        $this->deferOnOpen($request, $class, $response);
+                        [$onMessageCallbackInstance, $onMessageCallbackMethod] = $this->getCallback(Event::ON_MESSAGE);
+                        [$onCloseCallbackInstance, $onCloseCallbackMethod] = $this->getCallback(Event::ON_CLOSE);
+                        while (true) {
+                            $frame = $response->recvWebSocketFrame();
+                            $opcode = $frame->getOpcode();
+                            switch ($opcode) {
+                                case Opcode::PING:
+                                    $response->sendString(Frame::PONG);
+                                    break;
+                                case Opcode::PONG:
+                                    break;
+                                case Opcode::CLOSE:
+                                    wait(static function () use ($onCloseCallbackInstance, $onCloseCallbackMethod, $response, $fd) {
+                                        $onCloseCallbackInstance->{$onCloseCallbackMethod}($response, $fd, 0);
+                                    });
+                                    break 2;
+                                default:
+                                    wait(static function () use ($onMessageCallbackInstance, $onMessageCallbackMethod, $response, $frame) {
+                                        $onMessageCallbackInstance->{$onMessageCallbackMethod}($response, $frame);
+                                    });
+                            }
+                        }
+                    }
+                    throw new BadRequestHttpException('Unsupported Upgrade Type');
+                }
             } else {
                 $this->deferOnOpen($request, $class, $server);
             }
         } catch (Throwable $throwable) {
             // Delegate the exception to exception handler.
             $psr7Response = $this->exceptionHandlerDispatcher->dispatch($throwable, $this->exceptionHandlers);
-            FdCollector::del($request->fd);
-            WsContext::release($request->fd);
+            isset($fd) && FdCollector::del($fd);
+            isset($fd) && WsContext::release($fd);
         } finally {
             isset($fd) && $this->getSender()->setResponse($fd, null);
             // Send the Response to client.
@@ -236,10 +273,10 @@ class Server implements MiddlewareInitializerInterface, OnHandShakeInterface, On
 
     public function onMessage($server, $frame): void
     {
-        if ($server instanceof SwooleResponse) {
-            $fd = $server->fd;
-        } else {
+        if($server instanceof WebSocketServer){
             $fd = $frame->fd;
+        }else{
+            $fd = $this->getFd($server);
         }
         Context::set(WsContext::FD, $fd);
         $fdObj = FdCollector::get($fd);
@@ -291,28 +328,28 @@ class Server implements MiddlewareInitializerInterface, OnHandShakeInterface, On
     /**
      * @param SwooleResponse|WebSocketServer $server
      */
-    protected function deferOnOpen(SwooleRequest $request, string $class, $server)
+    protected function deferOnOpen($request, string $class, $server)
     {
-        $onOpen = function () use ($request, $class, $server) {
-            $instance = $this->container->get($class);
+        $instance = $this->container->get($class);
+        wait(static function () use ($request, $instance, $server) {
             if ($instance instanceof OnOpenInterface) {
                 $instance->onOpen($server, $request);
-            }
-        };
 
-        if ($server instanceof SwooleResponse) {
-            wait($onOpen);
-        } else {
-            defer($onOpen);
-        }
+            }
+        });
     }
 
     /**
      * Initialize PSR-7 Request.
      */
-    protected function initRequest(SwooleRequest $request): ServerRequestInterface
+    protected function initRequest($request): ServerRequestInterface
     {
-        Context::set(ServerRequestInterface::class, $psr7Request = Psr7Request::loadFromSwooleRequest($request));
+        if ($request instanceof ServerRequestInterface) {
+            $psr7Request = $request;
+        } else {
+            $psr7Request = Psr7Request::loadFromSwooleRequest($request);
+        }
+        Context::set(ServerRequestInterface::class, $psr7Request);
         WsContext::set(ServerRequestInterface::class, $psr7Request);
         return $psr7Request;
     }
@@ -324,5 +361,15 @@ class Server implements MiddlewareInitializerInterface, OnHandShakeInterface, On
     {
         Context::set(ResponseInterface::class, $psr7Response = new Psr7Response());
         return $psr7Response;
+    }
+
+    protected function getCallback(string $event): array
+    {
+        [, , $callbacks] = ServerManager::get($this->serverName);
+
+        [$callback, $method] = $callbacks[$event];
+        $instance = $this->container->get($callback);
+
+        return [$instance, $method];
     }
 }
