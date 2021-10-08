@@ -196,7 +196,7 @@ class Server implements MiddlewareInitializerInterface, OnHandShakeInterface, On
             FdCollector::set($fd, $class);
             $server = $this->getServer();
             if (Constant::isCoroutineServer($server)) {
-                $upgrade = new WebSocket($response);
+                $upgrade = new WebSocket($response, $request);
 
                 // TODO: Support SWOW
                 $response instanceof SwooleResponse && $this->getSender()->setResponse($fd, $response);
